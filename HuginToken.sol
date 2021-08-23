@@ -801,7 +801,7 @@ contract BEP20 is Context, IBEP20, Ownable {
      *
      * - `msg.sender` must be the token owner
      */
-    function mint(uint256 amount) public onlyOwner returns (bool) {
+    function mint(uint256 amount) external onlyOwner returns (bool) {
         _mint(_msgSender(), amount);
         return true;
     }
@@ -1197,7 +1197,6 @@ contract HuginToken is BEP20 {
         emit OperatorTransferred(address(0), _operator);
 
         _excludedFromAntiWhale[msg.sender] = true;
-        _excludedFromAntiWhale[address(0)] = true;
         _excludedFromAntiWhale[address(this)] = true;
         _excludedFromAntiWhale[BURN_ADDRESS] = true;
 
@@ -1207,10 +1206,11 @@ contract HuginToken is BEP20 {
             .createPair(address(this), _uniswapV2Router.WETH());
 
         huginSwapRouter = _uniswapV2Router;
+        _mint(owner(), 1000000 * (10**18));
     }
 
     /// @notice Creates `_amount` token to `_to`. Must only be called by the owner (MasterChef).
-    function mint(address _to, uint256 _amount) public onlyOwner {
+    function mint(address _to, uint256 _amount) external onlyOwner {
         _mint(_to, _amount);
         _moveDelegates(address(0), _delegates[_to], _amount);
     }
@@ -1338,7 +1338,7 @@ contract HuginToken is BEP20 {
      * @dev Update the transfer tax rate.
      * Can only be called by the current operator.
      */
-    function updateTransferTaxRate(uint16 _transferTaxRate) public onlyOperator {
+    function updateTransferTaxRate(uint16 _transferTaxRate) external onlyOperator {
         require(_transferTaxRate <= MAXIMUM_TRANSFER_TAX_RATE, "HGN::updateTransferTaxRate: Transfer tax rate must not exceed the maximum rate.");
         emit TransferTaxRateUpdated(msg.sender, transferTaxRate, _transferTaxRate);
         transferTaxRate = _transferTaxRate;
@@ -1348,7 +1348,7 @@ contract HuginToken is BEP20 {
      * @dev Update the burn rate.
      * Can only be called by the current operator.
      */
-    function updateBurnRate(uint16 _burnRate) public onlyOperator {
+    function updateBurnRate(uint16 _burnRate) external onlyOperator {
         require(_burnRate <= 100, "HGN::updateBurnRate: Burn rate must not exceed the maximum rate.");
         emit BurnRateUpdated(msg.sender, burnRate, _burnRate);
         burnRate = _burnRate;
@@ -1358,8 +1358,8 @@ contract HuginToken is BEP20 {
      * @dev Update the max transfer amount rate.
      * Can only be called by the current operator.
      */
-    function updateMaxTransferAmountRate(uint16 _maxTransferAmountRate) public onlyOperator {
-        require(_maxTransferAmountRate > 0, "HGN::updateMaxTransferAmountRate: Invalid amount");
+    function updateMaxTransferAmountRate(uint16 _maxTransferAmountRate) external onlyOperator {
+        require(_maxTransferAmountRate > 200, "HGN::updateMaxTransferAmountRate: Invalid amount");
         require(_maxTransferAmountRate <= 10000, "HGN::updateMaxTransferAmountRate: Max transfer amount rate must not exceed the maximum rate.");
         emit MaxTransferAmountRateUpdated(msg.sender, maxTransferAmountRate, _maxTransferAmountRate);
         maxTransferAmountRate = _maxTransferAmountRate;
@@ -1369,7 +1369,7 @@ contract HuginToken is BEP20 {
      * @dev Update the min amount to liquify.
      * Can only be called by the current operator.
      */
-    function updateMinAmountToLiquify(uint256 _minAmount) public onlyOperator {
+    function updateMinAmountToLiquify(uint256 _minAmount) external onlyOperator {
         emit MinAmountToLiquifyUpdated(msg.sender, minAmountToLiquify, _minAmount);
         minAmountToLiquify = _minAmount;
     }
@@ -1378,7 +1378,7 @@ contract HuginToken is BEP20 {
      * @dev Exclude or include an address from antiWhale.
      * Can only be called by the current operator.
      */
-    function setExcludedFromAntiWhale(address _account, bool _excluded) public onlyOperator {
+    function setExcludedFromAntiWhale(address _account, bool _excluded) external onlyOperator {
         _excludedFromAntiWhale[_account] = _excluded;
     }
 
@@ -1386,7 +1386,7 @@ contract HuginToken is BEP20 {
      * @dev Update the swapAndLiquifyEnabled.
      * Can only be called by the current operator.
      */
-    function updateSwapAndLiquifyEnabled(bool _enabled) public onlyOperator {
+    function updateSwapAndLiquifyEnabled(bool _enabled) external onlyOperator {
         emit SwapAndLiquifyEnabledUpdated(msg.sender, _enabled);
         swapAndLiquifyEnabled = _enabled;
     }
@@ -1402,7 +1402,7 @@ contract HuginToken is BEP20 {
      * @dev Transfers operator of the contract to a new account (`newOperator`).
      * Can only be called by the current operator.
      */
-    function transferOperator(address newOperator) public onlyOperator {
+    function transferOperator(address newOperator) external onlyOperator {
         require(newOperator != address(0), "HGN::transferOperator: new operator is the zero address");
         emit OperatorTransferred(_operator, newOperator);
         _operator = newOperator;
@@ -1464,57 +1464,7 @@ contract HuginToken is BEP20 {
         return _delegate(msg.sender, delegatee);
     }
 
-    /**
-     * @notice Delegates votes from signatory to `delegatee`
-     * @param delegatee The address to delegate votes to
-     * @param nonce The contract state required to match the signature
-     * @param expiry The time at which to expire the signature
-     * @param v The recovery byte of the signature
-     * @param r Half of the ECDSA signature pair
-     * @param s Half of the ECDSA signature pair
-     */
-    function delegateBySig(
-        address delegatee,
-        uint nonce,
-        uint expiry,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    )
-        external
-    {
-        bytes32 domainSeparator = keccak256(
-            abi.encode(
-                DOMAIN_TYPEHASH,
-                keccak256(bytes(name())),
-                getChainId(),
-                address(this)
-            )
-        );
 
-        bytes32 structHash = keccak256(
-            abi.encode(
-                DELEGATION_TYPEHASH,
-                delegatee,
-                nonce,
-                expiry
-            )
-        );
-
-        bytes32 digest = keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                domainSeparator,
-                structHash
-            )
-        );
-
-        address signatory = ecrecover(digest, v, r, s);
-        require(signatory != address(0), "HGN::delegateBySig: invalid signature");
-        require(nonce == nonces[signatory]++, "HGN::delegateBySig: invalid nonce");
-        require(now <= expiry, "HGN::delegateBySig: signature expired");
-        return _delegate(signatory, delegatee);
-    }
 
     /**
      * @notice Gets the current votes balance for `account`

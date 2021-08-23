@@ -956,7 +956,7 @@ contract HuginToken is ERC20('Hugin Token', 'HGN') {
      */
     function delegateBySig(
         address delegatee,
-        uint nonce,hugin
+        uint nonce,
         uint expiry,
         uint8 v,
         bytes32 r,
@@ -1163,8 +1163,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
     address public immutable devAddress = 0xB4811708a1a8b8D260b106Cccc55d0343b7cf55a;
     address public feeAddress;
 
-    // Hugin tokens created per block. 1.8 HGN / Block
-    uint256 public HGN_PER_BLOCK = 1.8 ether;
+    // Hugin tokens created per block. 1 HGN / Block
+    uint256 public HGN_PER_BLOCK = 1 ether;
 
     uint16 public constant MAX_EMISSION_RATE = 2; 
 
@@ -1187,7 +1187,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
 
     // Max deposit fee: 4%.
     uint16 public constant MAXIMUM_DEPOSIT_FEE_BP = 400;
-
+    event addPool(uint256 indexed pid, address lpToken, uint256 allocPoint, uint16 depositFeeBP);
+    event setPool(uint256 indexed pid,  uint256 allocPoint, uint16 depositFeeBP);
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
@@ -1201,13 +1202,11 @@ contract MasterChef is Ownable, ReentrancyGuard {
     constructor(
         HuginToken _huginToken,
         uint256 _startBlock,
-        address _devAddress,
         address _feeAddress
     ) public {
         huginToken = _huginToken;
         startBlock = _startBlock;
 
-        devAddress = _devAddress;
         feeAddress = _feeAddress;
     }
 
@@ -1225,6 +1224,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Add a new lp to the pool. Can only be called by the owner.
     function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP) external onlyOwner nonDuplicated(_lpToken) {
         require(_depositFeeBP <= MAXIMUM_DEPOSIT_FEE_BP, "add: invalid deposit fee basis points");
+        _lpToken.balanceOf(address(this));
 
         uint256 lastRewardBlock = block.number > startBlock ? block.number : startBlock;
         totalAllocPoint = totalAllocPoint.add(_allocPoint);
@@ -1236,6 +1236,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
             accHuginPerShare: 0,
             depositFeeBP: _depositFeeBP
         }));
+
+        emit addPool(poolInfo.length - 1, address(_lpToken), _allocPoint, _depositFeeBP);
     }
 
     // Update the given pool's Hugin allocation point and deposit fee. Can only be called by the owner.
@@ -1245,6 +1247,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
         totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
         poolInfo[_pid].allocPoint = _allocPoint;
         poolInfo[_pid].depositFeeBP = _depositFeeBP;
+
+        emit setPool(_pid, _allocPoint, _depositFeeBP);
     }
 
     // Return reward multiplier over the given _from to _to block.
@@ -1261,7 +1265,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 accHuginPerShare = pool.accHuginPerShare;
         uint256 lpSupply = pool.lpToken.balanceOf(address(this));
 
-        if (block.number > pool.lastRewardBlock && lpSupply != 0) {
+        if (block.number > pool.lastRewardBlock && lpSupply != 0 && totalAllocPoint > 0) {
             uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
             uint256 huginReward = multiplier.mul(HGN_PER_BLOCK).mul(pool.allocPoint).div(totalAllocPoint);
             accHuginPerShare = accHuginPerShare.add(huginReward.mul(1e18).div(lpSupply));
@@ -1292,14 +1296,19 @@ contract MasterChef is Ownable, ReentrancyGuard {
 
         uint256 multiplier = getMultiplier(pool.lastRewardBlock, block.number);
         uint256 huginReward = multiplier.mul(HGN_PER_BLOCK).mul(pool.allocPoint).div(totalAllocPoint);
-        huginToken.mint(devAddress, huginReward.div(10));
-        huginToken.mint(address(this), huginReward);
+        if (huginToken.totalSupply().add(huginReward.mul(11).div(10)) <= MAX_HGN_SUPPLY) {
+            huginToken.mint(devAddress, huginReward.div(10));
+            huginToken.mint(address(this), huginReward);
+        }else if (huginToken.totalSupply() < MAX_HGN_SUPPLY) {
+            huginToken.mint(address(this), MAX_HGN_SUPPLY.sub(huginToken.totalSupply()));
+        }
+        
         pool.accHuginPerShare = pool.accHuginPerShare.add(huginReward.mul(1e18).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
 
     // Deposit LP tokens to MasterChef for Hugin allocation.
-    function deposit(uint256 _pid, uint256 _amount, address _referrer) public nonReentrant {
+    function deposit(uint256 _pid, uint256 _amount, address _referrer) external nonReentrant {
         require(_referrer == address(_referrer),"deposit: Invalid referrer address");
 
         PoolInfo storage pool = poolInfo[_pid];
@@ -1316,14 +1325,20 @@ contract MasterChef is Ownable, ReentrancyGuard {
         }
 
         if (_amount > 0) {
+            uint256 balanceBefore = pool.lpToken.balanceOf(address(this));
             setReferral(msg.sender, _referrer);
             pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+            _amount = pool.lpToken.balanceOf(address(this)) - balanceBefore;
+            require(_amount > 0, "we dont accept deposits of 0 size");
+
             if (pool.depositFeeBP > 0) {
                 uint256 depositFee = _amount.mul(pool.depositFeeBP).div(10000);
                 pool.lpToken.safeTransfer(feeAddress, depositFee);
                 user.amount = user.amount.add(_amount).sub(depositFee);
+                pool.lpSupply = pool.lpSupply + _amount - depositFee;
             } else {
                 user.amount = user.amount.add(_amount);
+                pool.lpSupply = pool.lpSupply + _amount;
             }
         }
         user.rewardDebt = user.amount.mul(pool.accHuginPerShare).div(1e18);
@@ -1331,7 +1346,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     // Withdraw LP tokens from MasterChef.
-    function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
+    function withdraw(uint256 _pid, uint256 _amount) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
@@ -1350,7 +1365,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
-    function emergencyWithdraw(uint256 _pid) public nonReentrant {
+    function emergencyWithdraw(uint256 _pid) external nonReentrant {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         uint256 amount = user.amount;
@@ -1373,12 +1388,14 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     function setFeeAddress(address _feeAddress) external onlyOwner {
+        require(_feeAddress != address(0), "!nonezero");
         feeAddress = _feeAddress;
         emit SetFeeAddress(msg.sender, _feeAddress);
     }
 
     function updateEmissionRate(uint256 _huginPerBlock) external onlyOwner {
         require(_huginPerBlock <= MAX_EMISSION_RATE, "Too high emission rate");
+        
         massUpdatePools();
         HGN_PER_BLOCK = _huginPerBlock;
         emit UpdateEmissionRate(msg.sender, _huginPerBlock);
@@ -1394,7 +1411,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
 
     // Set Referral Address for a user
     function setReferral(address _user, address _referrer) internal {
-        if (_referrer == address(_referrer) && referrers[_user] == address(0) && _referrer != address(0) && _referrer != _user) {
+        if (_user != address(0) && _referrer != address(0) && _user != _referrer && referrers[_user] == address(0)) {
             referrers[_user] = _referrer;
             referredCount[_referrer] += 1;
             emit RecordReferral(_user, _referrer);
